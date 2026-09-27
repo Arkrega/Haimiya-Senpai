@@ -20,6 +20,10 @@ export default {
       name: "Arkharega",
     },
   },
+  global.APIs = {
+  nexray: 'https://api.nexray.eu.cc',
+  faa: 'https://api-faa.my.id'
+  },
   mess: {
     owner: "🚫 Access denied! You're not the owner!",
     admin: "🚫 Access denied! You're not an admin of this group!",
