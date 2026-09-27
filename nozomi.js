@@ -46,6 +46,7 @@ import {
   makeWASocket,
   useMultiFileAuthState,
   Browsers,
+  delay
 } from "@itsliaaa/baileys";
 import Pino from "pino";
 import fs from "fs/promises";
@@ -137,6 +138,27 @@ async function connectToWhatsApp() {
 
     conn.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;
+
+      if (connection === "connecting" && !config.pairingWithQr && !state.creds.registered) {
+        try {
+          if (!config.bot.number) {
+            console.log(chalk.red("Nomor bot tidak ditemukan di config.js! Tambahkan config.bot.number"));
+            process.exit(1);
+          }
+          const phoneNumber = validatePhoneNumber(config.bot.number);
+          await delay(1500);
+          const code = await conn.requestPairingCode(phoneNumber, config.customPairingCode);
+          console.log(`HAIMIYA PAIRING CODE: ${chalk.yellow(code)}`);
+          console.log(
+            chalk.gray(
+              "Buka WhatsApp > Perangkat Tertaut > Tautkan dengan Nomor Telepon > Masukkan kode di atas.",
+            ),
+          );
+        } catch (error) {
+          console.error("Failed to request pairing code:", error.message);
+        }
+      }
+
       if (qr && config.pairingWithQr) {
         QRCode.generate(qr, { small: true });
         console.log(
@@ -178,25 +200,6 @@ async function connectToWhatsApp() {
     });
 
     conn.ev.on("creds.update", saveCreds);
-
-    if (!config.pairingWithQr && !state.creds.registered) {
-      try {
-        if (!config.bot.number) {
-            console.log(chalk.red("Nomor bot tidak ditemukan di config.js! Tambahkan config.bot.number"));
-            process.exit(1);
-        }
-        const phoneNumber = validatePhoneNumber(config.bot.number);
-        const code = await conn.requestPairingCode(phoneNumber, config.customPairingCode);
-        console.log(`HAIMIYA PAIRING CODE: ${chalk.yellow(code)}`);
-        console.log(
-          chalk.gray(
-            "Buka WhatsApp > Perangkat Tertaut > Tautkan dengan Nomor Telepon > Masukkan kode di atas.",
-          ),
-        );
-      } catch (error) {
-        console.error("Failed to request pairing code:", error.message);
-      }
-    }
 
     conn.ev.on("call", async (calls) => {
       const isAnticall = getRuntimeValue("anticall");
