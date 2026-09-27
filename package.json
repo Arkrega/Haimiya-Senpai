@@ -1,0 +1,37 @@
+{
+  "name": "nozomi-base",
+  "version": "1.8.3",
+  "description": "Base bot whatsapp ( module )",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "nozomi.js",
+  "scripts": {
+    "start": "node nozomi.js",
+    "dev": "nodemon nozomi.js --ignore node_modules/ --ignore nozomi_sessions/ --ignore database/"
+  },
+  "dependencies": {
+    "@google/genai": "latest",
+    "@google/generative-ai": "latest",
+    "@itsliaaa/baileys": "latest",
+    "axios": "latest",
+    "axios-cookiejar-support": "latest",
+    "canvas": "latest",
+    "chalk": "latest",
+    "cheerio": "latest",
+    "chokidar": "latest",
+    "cloudscraper": "latest",
+    "fluent-ffmpeg": "latest",
+    "node-fetch": "latest",
+    "node-webpmux": "latest",
+    "pdfjs-dist": "latest",
+    "pino": "latest",
+    "qrcode-terminal": "latest",
+    "tough-cookie": "latest",
+    "util": "latest",
+    "validator": "latest",
+    "zencf": "latest",
+    "file-type": "latest",
+    "sharp": "latest"
+  }
+}
