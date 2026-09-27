@@ -14,6 +14,7 @@
     "@google/genai": "latest",
     "@google/generative-ai": "latest",
     "@itsliaaa/baileys": "latest",
+    "@zenaveline/scraper": "latest",
     "axios": "latest",
     "axios-cookiejar-support": "latest",
     "canvas": "latest",
@@ -21,17 +22,19 @@
     "cheerio": "latest",
     "chokidar": "latest",
     "cloudscraper": "latest",
+    "file-type": "latest",
     "fluent-ffmpeg": "latest",
+    "form-data": "latest",
     "node-fetch": "latest",
     "node-webpmux": "latest",
     "pdfjs-dist": "latest",
     "pino": "latest",
     "qrcode-terminal": "latest",
+    "sharp": "latest",
     "tough-cookie": "latest",
     "util": "latest",
     "validator": "latest",
-    "zencf": "latest",
-    "file-type": "latest",
-    "sharp": "latest"
+    "yt-search": "latest",
+    "zencf": "latest"
   }
 }

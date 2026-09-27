@@ -1,3 +1,7 @@
+global.APIs = {
+  nexray: "https://api.nexray.eu.cc",
+  faa: "https://api-faa.my.id"
+};
 process.on("warning", (warning) => {
   if (
     warning.name === "DeprecationWarning" &&
