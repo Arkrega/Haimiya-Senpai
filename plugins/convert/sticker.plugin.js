@@ -12,21 +12,37 @@ export default {
   private_only: false,
   group_only: false,
   category: "convert",
-  async run(conn, m, { jid, quoted, quotedMessage, isMedia, usedPrefix, command }) {
-    let mediaMessage = null;
-    if (quoted) {
-      mediaMessage = { key: m.key, message: quotedMessage };
-    } else if (isMedia) {
-      mediaMessage = { key: m.key, message: m.message };
-    }
+  async run(conn, m, { jid, quoted, quotedMessage, usedPrefix, command }) {
+    let msgObj = quoted ? quotedMessage : m.message;
+    let isVideo = false;
+    let isImage = false;
 
-    if (!mediaMessage || (!mediaMessage.message.imageMessage && !mediaMessage.message.videoMessage)) {
+    const checkMedia = (obj) => {
+      if (!obj) return;
+      if (obj.imageMessage) isImage = true;
+      if (obj.videoMessage) isVideo = true;
+      if (obj.ephemeralMessage) checkMedia(obj.ephemeralMessage.message);
+      if (obj.viewOnceMessage) checkMedia(obj.viewOnceMessage.message);
+      if (obj.viewOnceMessageV2) checkMedia(obj.viewOnceMessageV2.message);
+      if (obj.viewOnceMessageV2Extension) checkMedia(obj.viewOnceMessageV2Extension.message);
+      if (obj.documentWithCaptionMessage) checkMedia(obj.documentWithCaptionMessage.message);
+    };
+
+    checkMedia(msgObj);
+
+    if (!isImage && !isVideo) {
       return await m.reply(`Kirim atau balas media dengan caption *${usedPrefix}${command}*\n\nNote: Video maksimal 5 detik`);
     }
 
     try {
-      const buffer = await downloadMediaMessage(mediaMessage, "buffer", {}, { reuploadRequest: conn.updateMediaMessage });
-      const isVideo = !!mediaMessage.message.videoMessage;
+      let mediaMessage = { key: m.key, message: msgObj };
+      const buffer = await downloadMediaMessage(
+        mediaMessage,
+        "buffer",
+        {},
+        { reuploadRequest: conn.updateMediaMessage }
+      );
+
       const ext = isVideo ? "mp4" : "jpg";
       const tmpIn = join(tmpdir(), `${randomBytes(6).toString("hex")}.${ext}`);
       const tmpOut = join(tmpdir(), `${randomBytes(6).toString("hex")}.webp`);
