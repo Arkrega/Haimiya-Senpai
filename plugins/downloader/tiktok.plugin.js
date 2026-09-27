@@ -1,68 +1,78 @@
 import { tiktokDl } from "../../scrape/tiktok.js";
-import { TikTokSearch } from "../../scrape/tiktoksearch.js";
+import { Carousel, Button } from "../../utils/MessageBuilderV4.7.js";
 
 export default {
-  name: "TikTok Downloader & Search",
-  command: ["tiktok", "tt", "ttsearch"],
+  name: "TikTok Downloader",
+  command: ["tt", "tiktok", "ttdl"],
   owner_only: false,
   private_only: false,
   group_only: false,
-  description: "Download atau cari video TikTok",
+  description: "Download video atau foto slide TikTok",
   category: "downloader",
   async run(conn, m, { jid, args, usedPrefix, command }) {
-    const cmd = command.toLowerCase();
-    const query = args.join(" ");
-
-    if (!query) {
-      return await m.reply(`Masukkan URL atau kata kunci!\nContoh: ${usedPrefix}${command} <url/query>`);
+    const url = args[0];
+    if (!url) {
+      return await m.reply(`Format salah!\n\nContoh penggunaan:\n> ${usedPrefix + command} https://vt.tiktok.com/xxxx/`);
     }
 
     await m.react("⏳");
+
     try {
-      if (cmd === "ttsearch") {
-        const res = await TikTokSearch.search(query, 5);
-        if (!res || !res.success || !res.payload) {
-          await m.react("❌");
-          return await m.reply("Tidak menemukan video TikTok dengan kata kunci tersebut.");
-        }
-
-        let text = `*Hasil Pencarian TikTok: ${query}*\n\n`;
-        res.payload.slice(0, 5).forEach((v, i) => {
-          text += `*${i + 1}. ${v.title}*\n`;
-          text += `👤 Author: ${v.author.nickname}\n`;
-          text += `⏱️ Durasi: ${v.duration} detik\n`;
-          text += `▶️ Views: ${v.stats.play_count}\n`;
-          text += `🔗 Link: https://tiktok.com/@${v.author.unique_id}/video/${v.id}\n\n`;
-        });
-
-        await m.reply(text.trim());
-        await m.react("✅");
-      } else {
-        const res = await tiktokDl(query);
-        if (!res || !res.status) {
-          await m.react("❌");
-          return await m.reply(`Gagal mengunduh TikTok: ${res.msg || "Server error"}`);
-        }
-
-        if (res.type === "photo" || (res.data && res.data[0] && res.data[0].type === "photo")) {
-          for (const img of res.data) {
-            if (img.type === "photo") {
-              await conn.sendMessage(jid, { image: { url: img.url } }, { quoted: m });
-            }
-          }
-          if (res.music_info?.url) {
-            await conn.sendMessage(jid, { audio: { url: res.music_info.url }, mimetype: "audio/mp4" }, { quoted: m });
-          }
-        } else {
-          const vid = res.data.find(v => v.type === "nowatermark") || res.data[0];
-          await conn.sendMessage(jid, { video: { url: vid.url }, caption: res.title }, { quoted: m });
-        }
-        await m.react("✅");
+      const res = await tiktokDl(url);
+      
+      if (!res.status) {
+        await m.react("❌");
+        return await m.reply(res.msg || "Gagal mengunduh media dari tautan tersebut.");
       }
+
+      const isPhotoSlide = res.data.some(v => v.type === 'photo');
+      const captionText = res.title || "TikTok Media";
+
+      if (isPhotoSlide) {
+        const slides = res.data.filter(v => v.type === 'photo');
+        
+        for (let i = 0; i < slides.length; i += 10) {
+          const chunk = slides.slice(i, i + 10);
+          const carousel = new Carousel(conn)
+            .setBody(i === 0 ? captionText : "Lanjutan slide TikTok...")
+            .setFooter("Swipe untuk melihat foto ➡️");
+
+          for (const [index, slide] of chunk.entries()) {
+            const card = await new Button(conn)
+              .setImage(slide.url)
+              .setBody(`Slide ${i + index + 1} dari ${slides.length}`)
+              .addUrl("Buka Original", slide.url)
+              .toCard();
+
+            carousel.addCard(card);
+          }
+
+          await carousel.send(jid, { quoted: m });
+        }
+
+      } else {
+        const videoData = res.data.find(v => v.type === 'nowatermark_hd') || 
+                          res.data.find(v => v.type === 'nowatermark') || 
+                          res.data[0];
+
+        await conn.sendMessage(jid, { 
+          video: { url: videoData.url }, 
+          caption: captionText 
+        }, { quoted: m });
+      }
+
+      if (res.music_info?.url) {
+        await conn.sendMessage(jid, { 
+          audio: { url: res.music_info.url }, 
+          mimetype: "audio/mp4" 
+        }, { quoted: m });
+      }
+
+      await m.react("✅");
+
     } catch (err) {
-      console.error(err);
       await m.react("❌");
-      await m.reply(`Terjadi kesalahan sistem:\n${err.message}`);
+      await m.reply("Terjadi kesalahan sistem saat memproses tautan TikTok.");
     }
   }
 };
