@@ -2,6 +2,48 @@ import axios from "axios";
 import { tiktokDl } from "../../scrape/tiktok.js";
 import { Carousel, Button } from "../../utils/MessageBuilderV4.7.js";
 
+function isValidMp4(buf) {
+  return Buffer.isBuffer(buf) && buf.length > 12 &&
+    buf.slice(4, 8).toString("ascii") === "ftyp";
+}
+
+function isValidMp3(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 4) return false;
+  if (buf.slice(0, 3).toString("ascii") === "ID3") return true;
+  return buf[0] === 0xFF && (buf[1] & 0xE0) === 0xE0;
+}
+
+async function downloadMedia(url, type = "video") {
+  const { data, status, headers } = await axios.get(url, {
+    responseType: "arraybuffer",
+    timeout: 60000,
+    maxRedirects: 5,
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      "Referer": "https://www.tikwm.com/",
+      "Origin": "https://www.tikwm.com",
+      "Accept":
+        type === "video"
+          ? "video/mp4,video/*;q=0.9,*/*;q=0.8"
+          : "audio/mpeg,audio/*;q=0.9,*/*;q=0.8",
+    },
+    validateStatus: () => true,
+  });
+
+  if (status >= 400) {
+    throw new Error(`CDN ${status} saat download ${type}`);
+  }
+
+  const buf = Buffer.from(data);
+  const sniff = buf.slice(0, 200).toString("utf8").toLowerCase();
+  if (sniff.includes("<html") || sniff.includes("<!doctype")) {
+    throw new Error(`CDN balikin HTML, bukan ${type}`);
+  }
+
+  return { buf, contentType: headers["content-type"] || "" };
+}
+
 export default {
   name: "TikTok Downloader",
   command: ["tt", "tiktok", "ttdl", "ttaudio"],
@@ -10,43 +52,59 @@ export default {
   group_only: false,
   description: "Download video, foto slide, atau audio TikTok",
   category: "downloader",
+
   async run(conn, m, { jid, args, usedPrefix, command }) {
     const url = args[0];
     if (!url) {
-      return await m.reply(`Format salah!\n\nContoh penggunaan:\n> ${usedPrefix + command} https://vt.tiktok.com/xxxx/`);
+      return m.reply(
+        `Format salah!\n\nContoh:\n> ${usedPrefix + command} https://vt.tiktok.com/xxxx/`
+      );
     }
 
     await m.react("⏳");
 
     try {
       const res = await tiktokDl(url);
-      
+
       if (!res.status) {
         await m.react("❌");
-        return await m.reply(res.msg || "Gagal mengunduh media dari tautan tersebut.");
+        return m.reply(res.msg || "Gagal mengunduh media.");
       }
 
       if (command === "ttaudio") {
-        if (!res.music_info?.url) {
-            await m.react("❌");
-            return await m.reply("Audio tidak ditemukan untuk tautan ini.");
+        const audioUrl = res.music_info?.url;
+        if (!audioUrl) {
+          await m.react("❌");
+          return m.reply("Audio tidak ditemukan untuk tautan ini.");
         }
-        const { data: audioBuffer } = await axios.get(res.music_info.url, { responseType: "arraybuffer" });
-        await conn.sendMessage(jid, { audio: audioBuffer, mimetype: "audio/mp4" }, { quoted: m });
+
+        const { buf } = await downloadMedia(audioUrl, "audio");
+        if (!isValidMp3(buf)) throw new Error("Buffer audio tidak valid");
+
+        await conn.sendMessage(
+          jid,
+          {
+            audio: buf,
+            mimetype: "audio/mpeg",
+            fileName: "tiktok.mp3",
+            ptt: false,
+          },
+          { quoted: m }
+        );
+
         await m.react("✅");
         return;
       }
 
-      const isPhotoSlide = res.data.some(v => v.type === 'photo');
-      const captionText = res.title || "TikTok Media";
+      const isPhotoSlide = res.data.some((v) => v.type === "photo");
 
       if (isPhotoSlide) {
-        const slides = res.data.filter(v => v.type === 'photo');
-        
+        const slides = res.data.filter((v) => v.type === "photo");
+
         for (let i = 0; i < slides.length; i += 10) {
           const chunk = slides.slice(i, i + 10);
           const carousel = new Carousel(conn)
-            .setBody(i === 0 ? captionText : "Lanjutan slide TikTok...")
+            .setBody(i === 0 ? res.title || "TikTok Media" : "Lanjutan slide TikTok...")
             .setFooter("Swipe untuk melihat foto ➡️");
 
           for (const [index, slide] of chunk.entries()) {
@@ -63,30 +121,54 @@ export default {
           await carousel.send(jid, { quoted: m });
         }
 
-      } else {
-        const videoData = res.data.find(v => v.type === 'nowatermark_hd') || 
-                          res.data.find(v => v.type === 'nowatermark') || 
-                          res.data[0];
-
-        const { data: videoBuffer } = await axios.get(videoData.url, {
-            responseType: "arraybuffer",
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
-        });
-
-        await new Button(conn)
-          .setMedia({ video: videoBuffer })
-          .setBody(captionText)
-          .addReply("Ambil Musik", `${usedPrefix}ttaudio ${url}`)
-          .send(jid, { quoted: m });
+        await m.react("✅");
+        return;
       }
 
-      await m.react("✅");
+      const candidates = [
+        res.data.find((v) => v.type === "nowatermark_hd"),
+        res.data.find((v) => v.type === "nowatermark"),
+        res.data.find((v) => v.type === "watermark"),
+        res.data[0],
+      ].filter(Boolean);
 
+      let videoBuffer = null;
+      let lastErr = null;
+
+      for (const candidate of candidates) {
+        try {
+          const { buf } = await downloadMedia(candidate.url, "video");
+          if (isValidMp4(buf)) {
+            videoBuffer = buf;
+            break;
+          }
+          lastErr = new Error("MP4 signature tidak valid");
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+
+      if (!videoBuffer) {
+        throw lastErr || new Error("Semua URL video tidak valid");
+      }
+
+      await conn.sendMessage(
+        jid,
+        {
+          video: videoBuffer,
+          mimetype: "video/mp4",
+          fileName: "tiktok.mp4",
+          caption: res.title || "TikTok Media",
+          gifPlayback: false,
+        },
+        { quoted: m }
+      );
+
+      await m.react("✅");
     } catch (err) {
+      console.error("[TikTok Plugin]", err);
       await m.react("❌");
-      await m.reply("Terjadi kesalahan sistem saat memproses tautan TikTok.");
+      await m.reply(`Gagal memproses: ${err.message}`);
     }
-  }
+  },
 };
