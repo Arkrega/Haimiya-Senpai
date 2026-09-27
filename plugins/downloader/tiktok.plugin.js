@@ -1,4 +1,9 @@
 import axios from "axios";
+import { spawn } from "child_process";
+import { randomBytes } from "crypto";
+import { writeFile, readFile, unlink } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 import { tiktokDl } from "../../scrape/tiktok.js";
 import { Carousel, Button } from "../../utils/MessageBuilderV4.7.js";
 
@@ -42,6 +47,35 @@ async function downloadMedia(url, type = "video") {
   }
 
   return { buf, contentType: headers["content-type"] || "" };
+}
+
+async function remuxForWhatsApp(buffer) {
+  const tmpIn = join(tmpdir(), `tt-in-${randomBytes(6).toString("hex")}.mp4`);
+  const tmpOut = join(tmpdir(), `tt-out-${randomBytes(6).toString("hex")}.mp4`);
+
+  await writeFile(tmpIn, buffer);
+
+  await new Promise((resolve, reject) => {
+    const ff = spawn("ffmpeg", [
+      "-y",
+      "-i", tmpIn,
+      "-c", "copy",
+      "-movflags", "+faststart",
+      tmpOut,
+    ]);
+
+    let err = "";
+    ff.stderr.on("data", (d) => (err += d.toString()));
+    ff.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`FFmpeg exit ${code}: ${err.slice(-300)}`));
+    });
+  });
+
+  const out = await readFile(tmpOut);
+  await unlink(tmpIn).catch(() => {});
+  await unlink(tmpOut).catch(() => {});
+  return out;
 }
 
 export default {
@@ -150,6 +184,12 @@ export default {
 
       if (!videoBuffer) {
         throw lastErr || new Error("Semua URL video tidak valid");
+      }
+
+      try {
+        videoBuffer = await remuxForWhatsApp(videoBuffer);
+      } catch (e) {
+        console.error("[TikTok] Remux gagal, kirim raw:", e.message);
       }
 
       await conn.sendMessage(
