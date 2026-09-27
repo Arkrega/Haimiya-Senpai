@@ -1,5 +1,5 @@
 import axios from 'axios'
-import cheerio from 'cheerio'
+import * as cheerio from 'cheerio'
 import FormData from 'form-data'
 import fetch from 'node-fetch'
 import yts from 'yt-search'
