@@ -48,7 +48,6 @@ import {
   Browsers,
 } from "@itsliaaa/baileys";
 import Pino from "pino";
-import readline from "readline";
 import fs from "fs/promises";
 import chalk from "chalk";
 import packageFile from "./package.json" with { type: "json" };
@@ -120,31 +119,6 @@ async function checkForUpdates() {
   } catch {}
 }
 
-async function askPhoneNumber() {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  try {
-    const phoneNumberInput = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        rl.close();
-        reject(new Error("Time's up. Please try again."));
-      }, 120000);
-      rl.question(
-        `Enter your bot WhatsApp number:\n`,
-        (answer) => {
-          clearTimeout(timeout);
-          resolve(answer);
-        },
-      );
-    });
-    return validatePhoneNumber(phoneNumberInput);
-  } finally {
-    rl.close();
-  }
-}
-
 async function connectToWhatsApp() {
   if (connecting) {
     return;
@@ -207,12 +181,16 @@ async function connectToWhatsApp() {
 
     if (!config.pairingWithQr && !state.creds.registered) {
       try {
-        const phoneNumber = await askPhoneNumber();
+        if (!config.bot.number) {
+            console.log(chalk.red("Nomor bot tidak ditemukan di config.js! Tambahkan config.bot.number"));
+            process.exit(1);
+        }
+        const phoneNumber = validatePhoneNumber(config.bot.number);
         const code = await conn.requestPairingCode(phoneNumber, config.customPairingCode);
-        console.log(`YOUR PAIRING CODE: ${chalk.yellow(code)}`);
+        console.log(`HAIMIYA PAIRING CODE: ${chalk.yellow(code)}`);
         console.log(
           chalk.gray(
-            "Open WhatsApp > Link Devices > Link with Phone Number > Enter the code above.",
+            "Buka WhatsApp > Perangkat Tertaut > Tautkan dengan Nomor Telepon > Masukkan kode di atas.",
           ),
         );
       } catch (error) {

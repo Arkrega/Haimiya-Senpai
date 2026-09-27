@@ -9,6 +9,7 @@ export default {
   checkForUpdates: true,
   bot: {
     name: "Haimiya Mio",
+    number: "62882005656601",
     slog: "Yahoouu~!",
     ver: packageFile.version,
     thumb: "https://files.catbox.moe/g5a02r.jpg",
