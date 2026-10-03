@@ -24,7 +24,7 @@ export default {
       await m.react("⏳");
       
       const buffer = await downloadMediaMessage(
-        { key: m.key, message: quotedContent },
+        { key: m.quotedKey || m.key, message: quotedMessage },
         "buffer",
         {},
         {
