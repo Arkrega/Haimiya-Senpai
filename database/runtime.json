@@ -1,4 +1,11 @@
 {
   "self": false,
-  "auto_read": false
+  "auto_read": false,
+  "antidelete": true,
+  "anticall": true,
+  "backup": {
+    "enabled": false,
+    "interval": 86400000,
+    "lastRun": 0
+  }
 }
