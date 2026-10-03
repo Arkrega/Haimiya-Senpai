@@ -1,6 +1,7 @@
 import config from "../config.js";
 import { plugins } from "../plugins/index.js";
 import { getRuntimeValue } from "../utils/runtime.js";
+import { getStickerDB, getReactDB } from "../utils/cmd_db.js";
 import { Button } from "../utils/MessageBuilderV4.7.js";
 import chalk from "chalk";
 import { handleExec } from "./exec.js";
@@ -134,7 +135,8 @@ function getText(message) {
 
 function getQuoted(message) {
   const contextInfo = getContextInfo(message);
-  return contextInfo?.quotedMessage || null;
+  const quoted = contextInfo?.quotedMessage || null;
+  return quoted ? unwrapMessage(quoted) : null;
 }
 
 function getMediaType(type) {
@@ -231,6 +233,10 @@ export async function handleMessage(conn, msg) {
       return;
     }
 
+    if (msg.key.id && (msg.key.id.startsWith("BAE5") || msg.key.id.startsWith("3EB0") || msg.key.id.length === 16 || msg.isBaileys)) {
+      return;
+    }
+
     if (msg.key.id) {
       messageCache.set(msg.key.id, msg);
       if (messageCache.size > 15000) {
@@ -238,18 +244,41 @@ export async function handleMessage(conn, msg) {
       }
     }
 
+    const rawBotJid = conn.user?.id || "";
+    const rawBotLid = conn.user?.lid || "";
+    const botJid = normalizeJid(rawBotJid);
+    const botLid = rawBotLid || "";
+    const botNumber = getPhoneNumber(botJid);
+    
+    const ownerNumber = String(config.bot?.owner?.number || "").replace(/\D/g, "");
+    const ownerJidStr = `${ownerNumber}@s.whatsapp.net`;
+    const ownerJid = ownerJidStr;
+    const isMe = Boolean(msg.key.fromMe);
+
     if (msg.message?.protocolMessage?.type === 0) {
       const deletedKey = msg.message.protocolMessage.key;
       const originalMsg = messageCache.get(deletedKey.id);
       if (originalMsg) {
         const antidelete = getRuntimeValue("antidelete");
         if (antidelete === true) {
-          const ownerNumber = String(config.bot?.owner?.number || "").replace(/\D/g, "");
-          const ownerJid = `${ownerNumber}@s.whatsapp.net`;
           const senderName = originalMsg.pushName || "Tanpa Nama";
           const senderNum = (originalMsg.key.participant || originalMsg.key.remoteJid || "").split("@")[0];
+
+          const messageTime = Number(originalMsg.messageTimestamp || 0);
+          const waktuPesan = messageTime
+            ? new Intl.DateTimeFormat("id-ID", {
+                timeZone: "Asia/Jakarta",
+                day: "2-digit",
+                month: "2-digit",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+              }).format(new Date(messageTime * 1000)) + " WIB"
+            : "Tidak diketahui";
           
-          let chatInfo = "\n👤 Pesan Pribadi (PM)";
+          let chatInfo = "\n👤 Pesan Pribadi";
           if (originalMsg.key.remoteJid.endsWith("@g.us")) {
             let groupName = "Grup Tidak Diketahui";
             try {
@@ -258,10 +287,10 @@ export async function handleMessage(conn, msg) {
                 groupName = groupMeta.subject;
               }
             } catch (e) {}
-            chatInfo = `\n👥 Grup: ${groupName} (${originalMsg.key.remoteJid})`;
+            chatInfo = `\n? Grup: ${groupName} (${originalMsg.key.remoteJid})`;
           }
           
-          const infoText = `🚫 *ANTI DELETE TERDETEKSI* 🚫\n\n👤 Pengirim: ${senderName} (${senderNum})${chatInfo}`;
+          const infoText = `🚫 *ANTI DELETE TERDETEKSI* 🚫\n\n📲 Pengirim: ${senderName} (${senderNum})\n⏱️ Waktu: ${waktuPesan}${chatInfo}`;
           
           await conn.sendMessage(ownerJid, { text: infoText });
           await conn.sendMessage(ownerJid, { forward: originalMsg });
@@ -270,29 +299,86 @@ export async function handleMessage(conn, msg) {
       return;
     }
 
-    const isMe = Boolean(msg.key.fromMe);
     if (config.ignore_self && isMe) {
       return;
     }
+
     const remoteJid = msg.key.remoteJid || msg.key.remoteJidAlt || "";
     if (!remoteJid) {
       return;
     }
+
     const isGroup = remoteJid.endsWith("@g.us");
     const isChannel = remoteJid.endsWith("@newsletter");
-    const isBroadcast =
-      remoteJid === "status@broadcast" || msg.broadcast === true;
+    const isBroadcast = remoteJid === "status@broadcast" || msg.broadcast === true;
     const isPrivate = !isGroup && !isChannel && !isBroadcast;
+    
     const content = unwrapMessage(msg.message);
     if (!content) {
       return;
     }
+
     const type = getContentType(content);
     const contextInfo = getContextInfo(msg.message);
-    const mess = getText(msg.message).trim();
+    let mess = getText(msg.message).trim();
+
+    if (msg.message?.reactionMessage) {
+      const reaction = msg.message.reactionMessage;
+      const emoji = reaction.text;
+      const targetKey = reaction.key;
+      const reactDB = getReactDB();
+
+      if (reactDB[emoji] && remoteJid.endsWith("@g.us")) {
+        try {
+          const groupMeta = await conn.groupMetadata(remoteJid);
+          const participants = groupMeta.participants;
+          const senderId = msg.key.participant || msg.key.remoteJid;
+          
+          const isAdmin = participants.some(p => p.id === senderId && (p.admin === "admin" || p.admin === "superadmin"));
+          const botId = conn.user.id.split(":")[0] + "@s.whatsapp.net";
+          const isBotAdmin = participants.some(p => p.id === botId && (p.admin === "admin" || p.admin === "superadmin"));
+          const isOwnerCheck = senderId === ownerJidStr;
+
+          if ((isAdmin || isOwnerCheck) && isBotAdmin) {
+            const action = reactDB[emoji];
+            if (action === "kick" && targetKey.participant) {
+              await conn.groupParticipantsUpdate(remoteJid, [targetKey.participant], "remove");
+            } else if (action === "delete" || action === "del") {
+              await conn.sendMessage(remoteJid, { delete: targetKey });
+            }
+          }
+        } catch (err) {}
+      }
+      return; 
+    }
+
+    if (type === "stickerMessage" || content?.stickerMessage) {
+      const stickerMsg = content.stickerMessage || msg.message.stickerMessage;
+      if (stickerMsg?.fileSha256) {
+        const hash = Buffer.from(stickerMsg.fileSha256).toString("base64");
+        const stickerDB = getStickerDB();
+        if (stickerDB[hash]) {
+          mess = stickerDB[hash];
+        }
+      }
+    }
+
     const quotedMessage = getQuoted(msg.message);
     const quotedContent = quotedMessage ? unwrapMessage(quotedMessage) : null;
     const quotedType = quotedContent ? getContentType(quotedContent) : null;
+    
+    const quotedKey = quotedMessage && contextInfo?.stanzaId
+      ? {
+          remoteJid: contextInfo?.remoteJid || remoteJid,
+          id: contextInfo.stanzaId,
+          fromMe: Boolean(
+            contextInfo?.participant &&
+            normalizeJid(contextInfo.participant) === botJid
+          ),
+          ...(contextInfo?.participant ? { participant: contextInfo.participant } : {}),
+        }
+      : null;
+      
     const media = content?.[type] || null;
     const mediaType = getMediaType(type);
     const mentionedJid = contextInfo?.mentionedJid || [];
@@ -302,6 +388,7 @@ export async function handleMessage(conn, msg) {
     let isAdmin = false;
     let isBotAdmin = false;
     let isOwner = false;
+
     const ids = [
       msg.key.participant,
       msg.key.participantAlt,
@@ -310,15 +397,12 @@ export async function handleMessage(conn, msg) {
     ].filter(Boolean);
     let senderLid = ids.find((id) => id.includes("@lid")) || "";
     let senderJid = ids.find((id) => id.includes("@s.whatsapp.net")) || "";
-    const rawBotJid = conn.user?.id || "";
-    const rawBotLid = conn.user?.lid || "";
-    const botJid = normalizeJid(rawBotJid);
-    const botLid = rawBotLid || "";
-    const botNumber = getPhoneNumber(botJid);
+    
     if (isMe) {
       senderLid = botLid || senderLid;
       senderJid = botJid || senderJid;
     }
+
     let jid = remoteJid;
     let groupMetadata = null;
     let participants = [];
@@ -357,19 +441,18 @@ export async function handleMessage(conn, msg) {
           botParticipant?.admin === "owner";
       } catch (error) {}
     }
+
     const formattedLid = senderLid || "";
     const senderNumber = getPhoneNumber(senderJid);
     const senderName = msg.verifiedBizName || msg.pushName || "Tanpa Nama";
-    const ownerNumber = String(config.bot?.owner?.number || "").replace(
-      /\D/g,
-      "",
-    );
+    
     isOwner =
       Boolean(ownerNumber && senderNumber && senderNumber === ownerNumber) ||
       Boolean(senderLid && botLid && senderLid === botLid) ||
       Boolean(
-        senderJid && botJid && normalizeJid(senderJid) === normalizeJid(botJid),
+        senderJid && botJid && normalizeJid(senderJid) === botJid,
       );
+
     const m = {
       chat: remoteJid,
       jid,
@@ -411,6 +494,7 @@ export async function handleMessage(conn, msg) {
       hasQuoted: Boolean(quotedMessage),
       quoted: quotedMessage,
       quotedMessage,
+      quotedKey,
       quotedContent,
       quotedType,
       quotedText: quotedMessage ? getText(quotedMessage) : "",
@@ -646,28 +730,27 @@ export async function handleMessage(conn, msg) {
       if (isViolate) return;
     }
 
-    const afkData = checkAfk(senderJid);
-    if (afkData) {
-      const duration = Date.now() - afkData.time;
-      if (duration > 3000) {
-        removeAfk(senderJid);
-        await m.reply(`Berhenti AFK!\n\nDurasi AFK: ${formatAfkTime(duration)}`);
+    if (!isMe) {
+      const isMentioned = m.mentionedJid && m.mentionedJid.includes(ownerJidStr);
+      if (isMentioned || isPrivate) {
+          const afkData = checkAfk(ownerJidStr);
+          if (afkData) {
+              const durasi = formatAfkTime(Date.now() - afkData.time);
+              await m.reply(`𝗦𝗘𝗗𝗔𝗡𝗚 𝗔𝗙𝗞!\nMohon Tinggalkan Pesan Hingga Owner Selesai AFK\n\n📝 Alasan: ${afkData.reason}\n⏱️ Durasi: ${durasi} yang lalu`);
+          }
       }
     }
 
-    const jidsToCheck = [...mentionedJid];
-    if (m.quotedSender && !jidsToCheck.includes(m.quotedSender)) {
-      jidsToCheck.push(m.quotedSender);
-    }
-    if (isPrivate && !isMe && !jidsToCheck.includes(botJid)) {
-      jidsToCheck.push(botJid);
-    }
-
-    for (const j of jidsToCheck) {
-      const afkUser = checkAfk(j);
-      if (afkUser) {
-        const duration = Date.now() - afkUser.time;
-        await m.reply(`Orang ini sedang AFK (Do Not Disturb) 💤\n\n✏️ Alasan: ${afkUser.reason}\n⏱️ Sejak: ${formatAfkTime(duration)} yang lalu.`);
+    if (isMe && !isCmd) {
+      const afkData = checkAfk(m.sender);
+      if (afkData && (Date.now() - afkData.time > 3000)) {
+          const botReplyTexts = ["AFK", "Status AFK dimatikan", "Mohon Tinggalkan Pesan"];
+          const isBotAutoReply = botReplyTexts.some(text => mess.includes(text));
+          
+          if (!isBotAutoReply) {
+              removeAfk(m.sender);
+              await m.reply(`Status AFK dimatikan karena kamu telah kembali beraktivitas.\n🕐 Total waktu AFK: ${formatAfkTime(Date.now() - afkData.time)}`);
+          }
       }
     }
 
@@ -832,7 +915,9 @@ export async function handleMessage(conn, msg) {
         isBroadcast,
         isChannel,
         pushName: msg.pushName || senderName,
+        quoted: quotedMessage,
         quotedMessage,
+        quotedKey,
         quotedContent,
         quotedType,
         quotedText: m.quotedText,
