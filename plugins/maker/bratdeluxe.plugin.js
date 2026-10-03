@@ -1,4 +1,4 @@
-import axios from "axios";
+import { makeBrat } from "../../scrape/brat.js";
 import ffmpeg from "fluent-ffmpeg";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -11,14 +11,13 @@ export default {
   owner_only: false,
   private_only: false,
   group_only: false,
-  description: "Membuat animasi stiker brat versi upgrade (Deluxe)",
   category: "maker",
   async run(conn, m, { jid, args, usedPrefix, command, quotedText }) {
     const input = args.join(" ") || quotedText;
 
     if (!input) {
       return await m.reply(
-        `⚠️ *Teks tidak boleh kosong!*\n\n📌 *Cara Penggunaan:*\n${usedPrefix}${command} teks yang diinginkan\n\n⚙️ *Kustomisasi Lanjutan (Opsional):*\n${usedPrefix}${command} teks | tema(white/black) | blur(0-10) | durasi(angka)\n\n📌 *Contoh:*\n${usedPrefix}${command} Halo Abang! | white | 2 | 2.5`
+        `Format salah!\n\nPenggunaan:\n${usedPrefix}${command} teks | tema | blur | durasi\n\nContoh:\n${usedPrefix}${command} Halo Rek! | white | 1 | 1.5\n\nTema: white, black, green\nBlur: 0-3\nDurasi: Detik (angka)`
       );
     }
 
@@ -26,31 +25,26 @@ export default {
 
     const text = textValue;
     const theme = themeValue || "white";
-    const blur = blurValue || "0";
-    const hold = holdValue || "2";
+    const blur = Number(blurValue) || 0;
+    const hold = Number(holdValue) || 1.5;
 
     await m.react("⏳");
 
-    const params = new URLSearchParams({
-      q: text,
-      theme: theme,
-      blur: blur,
-      hold: hold
-    });
-
-    const targetUrl = `https://zellrayy.com/maker/bratvid2?${params.toString()}`;
-
     try {
-      const response = await axios.get(targetUrl, { responseType: "arraybuffer" });
-      const buffer = Buffer.from(response.data, "binary");
-
-      const tmpIn = join(tmpdir(), `${randomBytes(6).toString("hex")}.mp4`);
+      const mp4Path = join(tmpdir(), `brat-${randomBytes(6).toString("hex")}.mp4`);
       const tmpOut = join(tmpdir(), `${randomBytes(6).toString("hex")}.webp`);
-
-      await fs.writeFile(tmpIn, buffer);
+      
+      const generatedMp4 = await makeBrat({
+        text: text,
+        theme: theme,
+        blur: blur,
+        hold: hold,
+        format: 'mp4',
+        out: mp4Path
+      });
 
       await new Promise((resolve, reject) => {
-        ffmpeg(tmpIn)
+        ffmpeg(generatedMp4)
           .on("error", reject)
           .on("end", () => resolve(true))
           .addOutputOptions([
@@ -67,12 +61,11 @@ export default {
       const webpBuffer = await fs.readFile(tmpOut);
       await conn.sendMessage(jid, { sticker: webpBuffer }, { quoted: m });
 
-      await Promise.all([fs.unlink(tmpIn), fs.unlink(tmpOut)]);
+      await Promise.all([fs.unlink(generatedMp4), fs.unlink(tmpOut)]);
       await m.react("✅");
     } catch (error) {
-      console.error(error);
       await m.react("❌");
-      await m.reply("❌ Gagal membuat stiker. Pastikan parameter valid atau coba teks lain.");
+      await m.reply(`Gagal membuat stiker.\n\nError: ${error.message}`);
     }
   }
 };
