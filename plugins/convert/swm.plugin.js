@@ -42,13 +42,13 @@ export default {
   private_only: false,
   group_only: false,
   category: "convert",
-  async run(conn, m, { jid, args, quoted, quotedMessage, usedPrefix }) {
+  async run(conn, m, { jid, args, quoted, quotedMessage, quotedKey, usedPrefix }) {
     if (!quoted || !quotedMessage?.stickerMessage) {
       return await m.reply(`⚠️ Balas/reply stiker yang ingin dicolong watermark-nya!\n\nContoh:\n• ${usedPrefix}swm Punya|Abang\n• ${usedPrefix}colong MyPack|MyAuthor\n• ${usedPrefix}take CustomPack`);
     }
 
     let packname = "Haimiya-Senpai";
-    let author = "Made with ❤️";
+    let author = "Developed by Arkharega";
     const text = args.join(" ");
 
     if (text) {
@@ -63,7 +63,7 @@ export default {
     }
 
     try {
-      const webpBuffer = await downloadMediaMessage({ key: m.key, message: quotedMessage }, "buffer", {}, { reuploadRequest: conn.updateMediaMessage });
+      const webpBuffer = await downloadMediaMessage({ key: quotedKey || m.quotedKey || m.key, message: quotedMessage }, "buffer", {}, { reuploadRequest: conn.updateMediaMessage });
       const stickerWithExif = await writeExifWebp(webpBuffer, { packname, author });
 
       await conn.sendMessage(jid, { sticker: stickerWithExif }, { quoted: m });
