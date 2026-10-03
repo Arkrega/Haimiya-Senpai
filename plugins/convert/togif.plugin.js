@@ -8,13 +8,13 @@ export default {
   private_only: false,
   group_only: false,
   category: "convert",
-  async run(conn, m, { jid, usedPrefix, command, quoted, quotedMessage }) {
+  async run(conn, m, { jid, usedPrefix, command, quoted, quotedMessage, quotedKey }) {
     if (!quoted || !quotedMessage?.stickerMessage) {
       return await m.reply(`Balas stiker dengan *${usedPrefix}${command}*`);
     }
 
     try {
-      const webpBuffer = await downloadMediaMessage({ key: m.key, message: quotedMessage }, "buffer", {}, { reuploadRequest: conn.updateMediaMessage });
+      const webpBuffer = await downloadMediaMessage({ key: quotedKey || m.quotedKey || m.key, message: quotedMessage }, "buffer", {}, { reuploadRequest: conn.updateMediaMessage });
       let gifBuffer;
 
       try {
@@ -27,7 +27,7 @@ export default {
           .toBuffer();
       }
 
-      await conn.sendMessage(jid, { video: gifBuffer, gifPlayback: true, caption: "*ᬊ Sticker To GIF ᬊ*\n\nBerhasil mengubah stiker menjadi GIF berkualitas tinggi!" }, { quoted: m });
+      await conn.sendMessage(jid, { video: gifBuffer, gifPlayback: true, caption: "*Sticker To GIF*\n\nBerhasil mengubah stiker menjadi GIF berkualitas tinggi!" }, { quoted: m });
       await m.react("✅");
     } catch (e) {
       await m.react("❌");
