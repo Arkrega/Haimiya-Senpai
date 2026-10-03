@@ -4,7 +4,7 @@ import { randomBytes } from "crypto";
 import { writeFile, readFile, unlink } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { tiktokDl } from "../../scrape/tiktok.js";
+import { scrapeTikTok } from "../../scrape/tiktok.js";
 import { Carousel, Button } from "../../utils/MessageBuilderV4.7.js";
 
 function isValidMp4(buf) {
@@ -26,8 +26,7 @@ async function downloadMedia(url, type = "video") {
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-      "Referer": "https://www.tikwm.com/",
-      "Origin": "https://www.tikwm.com",
+      "Referer": "https://www.tiktok.com/",
       "Accept":
         type === "video"
           ? "video/mp4,video/*;q=0.9,*/*;q=0.8"
@@ -98,15 +97,16 @@ export default {
     await m.react("⏳");
 
     try {
-      const res = await tiktokDl(url);
+      const res = await scrapeTikTok(url);
+      const data = res.data;
 
-      if (!res.status) {
+      if (!data) {
         await m.react("❌");
-        return m.reply(res.msg || "Gagal mengunduh media.");
+        return m.reply("Gagal mengunduh media.");
       }
 
       if (command === "ttaudio") {
-        const audioUrl = res.music_info?.url;
+        const audioUrl = data.music?.playUrl;
         if (!audioUrl) {
           await m.react("❌");
           return m.reply("Audio tidak ditemukan untuk tautan ini.");
@@ -130,15 +130,13 @@ export default {
         return;
       }
 
-      const isPhotoSlide = res.data.some((v) => v.type === "photo");
-
-      if (isPhotoSlide) {
-        const slides = res.data.filter((v) => v.type === "photo");
+      if (data.isSlideshow && data.images) {
+        const slides = data.images;
 
         for (let i = 0; i < slides.length; i += 10) {
           const chunk = slides.slice(i, i + 10);
           const carousel = new Carousel(conn)
-            .setBody(i === 0 ? res.title || "TikTok Media" : "Lanjutan slide TikTok...")
+            .setBody(i === 0 ? data.desc || "TikTok Media" : "Lanjutan slide TikTok...")
             .setFooter("Swipe untuk melihat foto ➡️");
 
           for (const [index, slide] of chunk.entries()) {
@@ -159,19 +157,14 @@ export default {
         return;
       }
 
-      const candidates = [
-        res.data.find((v) => v.type === "nowatermark_hd"),
-        res.data.find((v) => v.type === "nowatermark"),
-        res.data.find((v) => v.type === "watermark"),
-        res.data[0],
-      ].filter(Boolean);
-
+      const candidates = data.video?._urls || (data.video?.url ? [data.video.url] : []);
+      
       let videoBuffer = null;
       let lastErr = null;
 
-      for (const candidate of candidates) {
+      for (const candUrl of candidates) {
         try {
-          const { buf } = await downloadMedia(candidate.url, "video");
+          const { buf } = await downloadMedia(candUrl, "video");
           if (isValidMp4(buf)) {
             videoBuffer = buf;
             break;
@@ -183,7 +176,7 @@ export default {
       }
 
       if (!videoBuffer) {
-        throw lastErr || new Error("Semua URL video tidak valid");
+        throw lastErr || new Error("Semua URL video tidak valid / gagal diunduh");
       }
 
       try {
@@ -198,7 +191,7 @@ export default {
           video: videoBuffer,
           mimetype: "video/mp4",
           fileName: "tiktok.mp4",
-          caption: res.title || "TikTok Media",
+          caption: data.desc || "TikTok Media",
           gifPlayback: false,
         },
         { quoted: m }
