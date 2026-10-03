@@ -1,10 +1,16 @@
+/*
+ * Original Base: Nozomi-Base by dev-ryusei-hoshino
+ * Developed & Customized by: ArkRega
+ * All rights to original architectural code belong to their respective authors.
+ */
+
 import packageFile from "./package.json" with { type: "json" };
 export default {
   pairingWithQr: false,
   customPairingCode: "HAIMIYAA",
   ignore_self: false,
   markOnlineOnConnect: false,
-  sessionDir: "nozomi_session",
+  sessionDir: "sessions",
   syncFullHistory: false,
   checkForUpdates: true,
   bot: {
