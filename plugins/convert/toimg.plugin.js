@@ -7,14 +7,14 @@ export default {
   private_only: false,
   group_only: false,
   category: "convert",
-  async run(conn, m, { jid, quoted, quotedMessage }) {
+  async run(conn, m, { jid, quoted, quotedMessage, quotedKey }) {
     if (!quoted || !quotedMessage?.stickerMessage) {
       await m.react("❌");
       return await m.reply("Silahkan reply sticker foto");
     }
 
     try {
-      const buffer = await downloadMediaMessage({ key: m.key, message: quotedMessage }, "buffer", {}, { reuploadRequest: conn.updateMediaMessage });
+      const buffer = await downloadMediaMessage({ key: quotedKey || m.quotedKey || m.key, message: quotedMessage }, "buffer", {}, { reuploadRequest: conn.updateMediaMessage });
       await conn.sendMessage(jid, { image: buffer, caption: "*ᬊ Sticker To Image ᬊ*\n\nSuccessfully convert to image!!" }, { quoted: m });
       await m.react("✅");
     } catch (e) {
