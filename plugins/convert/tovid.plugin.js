@@ -16,7 +16,7 @@ export default {
   private_only: false,
   group_only: false,
   category: "convert",
-  async run(conn, m, { jid, usedPrefix, command, quoted, quotedMessage }) {
+  async run(conn, m, { jid, usedPrefix, command, quoted, quotedMessage, quotedKey }) {
     if (!quoted || !quotedMessage?.stickerMessage) {
       return await m.reply(`Balas stiker dengan *${usedPrefix}${command}*`);
     }
@@ -25,7 +25,7 @@ export default {
     const output = path.join(tmpdir(), `${randomUUID()}.mp4`);
 
     try {
-      const webpBuffer = await downloadMediaMessage({ key: m.key, message: quotedMessage }, "buffer", {}, { reuploadRequest: conn.updateMediaMessage });
+      const webpBuffer = await downloadMediaMessage({ key: quotedKey || m.quotedKey || m.key, message: quotedMessage }, "buffer", {}, { reuploadRequest: conn.updateMediaMessage });
       
       let gifBuffer;
       try {
