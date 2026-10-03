@@ -1,119 +1,308 @@
+/**
+ * instagram.js — Instagram Scraper & Downloader
+ *
+ * @author  Shann
+ * @version 1.0.0
+ *
+ * Hits Instagram's internal API directly — no browser required.
+ * Supports photo, video, carousel, and reels.
+ *
+ * DO NOT REMOVE THIS HEADER — keep credit intact when forking or modifying.
+ */
+import fs from 'fs';
+import path from 'path';
 import axios from 'axios';
-import * as cheerio from 'cheerio';
-import vm from 'node:vm';
+import { wrapper } from 'axios-cookiejar-support';
+import { CookieJar } from 'tough-cookie';
+import axiosRetry from 'axios-retry';
+import { fileURLToPath } from 'url';
 
-async function indown(url) {
+const VERBOSE = process.argv.includes('--verbose') || process.argv.includes('-v');
+const log = (...a) => { if (VERBOSE) process.stderr.write(a.join(' ') + '\n'); };
+
+const _AUTHOR = 'Shann';
+const _REPO   = 'code.vyrgo.cyou/shanmolvyr/instagram';
+
+const UA_WEB = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+function createClient() {
+  const jar = new CookieJar();
+  const client = wrapper(axios.create({
+    jar,
+    withCredentials: true,
+    timeout: 20000,
+    maxRedirects: 10,
+  }));
+
+  (axiosRetry.default ?? axiosRetry)(client, {
+    retries: 3,
+    retryDelay: (n) => n * 1500,
+    retryCondition: (e) => !e.response || e.response.status === 429 || e.response.status >= 500,
+  });
+
+  return client;
+}
+
+function extractShortcode(input) {
+  input = input.trim();
+  if (!input.includes('/')) return input;
+  const m = input.match(/instagram\.com\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
+async function fetchViaHtml(client, shortcode) {
+  log('⏳ Trying HTML scrape...');
+  const res = await client.get(`https://www.instagram.com/p/${shortcode}/`, {
+    headers: {
+      'User-Agent': UA_WEB,
+      'Accept': 'text/html,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+    },
+    responseType: 'text',
+    validateStatus: (s) => s < 500,
+  });
+
+  const html = res.data;
+  log(`  → status: ${res.status}, size: ${(html.length/1024).toFixed(1)} KB`);
+  if (VERBOSE) fs.writeFileSync('debug_ig.html', html);
+
+  const blocks = [...html.matchAll(/<script[^>]*data-sjs[^>]*>({"require":\[\[.+?)<\/script>/gs)]
+    .map(m => m[1]);
+
+  log(`  → script blocks: ${blocks.length}`);
+
+  for (const block of blocks) {
+    if (!block.includes('RelayPrefetchedStreamCache')) continue;
+    if (!block.includes('xig_polaris')) continue;
+
     try {
-        const { data: pageData, headers } = await axios.get('https://indown.io/en1', {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-            }
-        });
+      const json  = JSON.parse(block);
+      const bbox  = json?.require?.[0]?.[3]?.[0]?.__bbox;
+      if (!bbox?.require) continue;
 
-        const $ = cheerio.load(pageData);
-        const token = $('input[name="_token"]').val();
-        const cookies = headers['set-cookie'] ? headers['set-cookie'].map(v => v.split(';')[0]).join('; ') : '';
+      for (const req of bbox.require) {
+        if (req[0] !== 'RelayPrefetchedStreamCache') continue;
 
-        if (!token) throw new Error('Token Indown not found');
+        const inner = req[3]?.[1]?.__bbox;
+        if (!inner) continue;
 
-        const params = new URLSearchParams();
-        params.append('referer', 'https://indown.io/en1');
-        params.append('locale', 'en');
-        params.append('_token', token);
-        params.append('link', url);
-        params.append('p', 'i');
+        const media = inner?.result?.data?.xig_polaris_media
+          || inner?.data?.xig_polaris_media;
+        if (!media) continue;
 
-        const { data: resultData } = await axios.post('https://indown.io/download', params, {
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Cookie': cookies,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-            }
-        });
+        const item = media.if_not_gated_logged_out || media;
+        if (!item.pk && !item.code) continue;
 
-        const $result = cheerio.load(resultData);
-        const resultUrls = [];
-
-        $result('video source[src], a[href].btn-outline-primary').each((i, e) => {
-            let link = $result(e).attr('src') || $result(e).attr('href');
-            if (link) {
-                if (link.includes('indown.io/fetch')) {
-                    try { link = decodeURIComponent(new URL(link).searchParams.get('url')); } catch (err) {}
-                }
-                if (/cdninstagram\.com|fbcdn\.net/.test(link)) {
-                    resultUrls.push(link.replace(/&dl=1$/, ''));
-                }
-            }
-        });
-
-        const uniqueUrls = [...new Set(resultUrls)];
-        if (uniqueUrls.length === 0) throw new Error('No media found');
-
-        return {
-            status: true,
-            source: 'indown',
-            result: {
-                metadata: { username: '-', caption: 'Downloaded via Indown' },
-                downloadUrl: uniqueUrls
-            }
-        };
-
+        log('✅ HTML scrape berhasil');
+        return { item, source: 'html' };
+      }
     } catch (e) {
-        return { status: false, message: e.message };
+      log(`  → parse error: ${e.message.slice(0, 60)}`);
     }
+  }
+
+  throw new Error('Tidak ada data di HTML response');
 }
 
-async function snapsave(targetUrl) {
-    try {
-        const form = new URLSearchParams();
-        form.append('url', targetUrl);
+function normalizeItem(item) {
+  const isVideo    = item.is_video || item.media_type === 2
+    || item.__typename === 'GraphVideo'
+    || item.__typename === 'XIGPolarisVideoMedia';
+  const isCarousel = item.media_type === 8
+    || item.__typename === 'GraphSidecar'
+    || item.__typename === 'XIGPolarisCarouselMedia'
+    || !!item.carousel_media
+    || !!item.edge_sidecar_to_children;
 
-        const { data } = await axios.post('https://snapsave.app/id/action.php?lang=id', form, {
-            headers: {
-                'origin': 'https://snapsave.app',
-                'referer': 'https://snapsave.app/id/download-video-instagram',
-                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
-        });
+  const owner  = item.owner || item.user || {};
+  const caption = item.edge_media_to_caption?.edges?.[0]?.node?.text
+    || item.caption?.text
+    || item.caption
+    || item.accessibility_caption
+    || '';
 
-        const ctx = {
-            window: {},
-            document: { getElementById: () => ({ value: '' }) },
-            console: console,
-            eval: (res) => res
-        };
+  const takenAt = item.taken_at || item.taken_at_timestamp || null;
 
-        vm.createContext(ctx);
-        const decoded = vm.runInContext(data, ctx);
-        const regex = /https:\/\/d\.rapidcdn\.app\/v2\?[^"]+/g;
-        const matches = decoded.match(regex);
+  const likeCount    = item.like_count    ?? item.edge_media_preview_like?.count    ?? null;
+  const commentCount = item.comment_count ?? item.edge_media_to_comment?.count      ?? null;
+  const viewCount    = item.view_count
+    ?? item.video_view_count
+    ?? item.clips_metadata?.views_count
+    ?? null;
 
-        if (matches && matches.length > 0) {
-            const cleanUrls = [...new Set(matches.map(url => url.replace(/&amp;/g, '&')))];
-            return {
-                status: true,
-                source: 'snapsave',
-                result: {
-                    metadata: { username: '-', caption: 'Downloaded via Snapsave' },
-                    downloadUrl: cleanUrls
-                }
-            };
-        }
+  const pad = n => String(n).padStart(2, '0');
+  const postedAt = takenAt ? (() => {
+    const d = new Date(Number(takenAt) * 1000);
+    return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}.${pad(d.getMinutes())}`;
+  })() : null;
 
-        throw new Error('No media found');
-    } catch (e) {
-        return { status: false, message: e.message };
-    }
+  let media = [];
+  if (isCarousel) {
+    const children = item.carousel_media
+      || item.edge_sidecar_to_children?.edges?.map(e => e.node)
+      || [];
+    for (const child of children) media.push(extractMedia(child));
+  } else {
+    media.push(extractMedia(item));
+  }
+
+  return {
+    id:        item.pk || item.id || null,
+    shortcode: item.code || item.shortcode || null,
+    type:      isCarousel ? 'carousel' : isVideo ? 'video' : 'photo',
+    caption:   typeof caption === 'string' ? caption : '',
+    postedAt,
+    owner: {
+      id:       owner.pk || owner.id || null,
+      username: owner.username || null,
+      fullName: owner.full_name || null,
+      avatar:   owner.profile_pic_url || null,
+      verified: !!(owner.is_verified || owner.verified || owner.is_verified_by_mv4b || owner.transparency_product_enabled),
+    },
+    stats: { likeCount, commentCount, viewCount },
+    media,
+    location: item.location ? {
+      name: item.location.name || null,
+      id:   item.location.pk  || item.location.id || null,
+    } : null,
+    _author: `${_AUTHOR} — ${_REPO}`,
+  };
 }
 
-async function igdl(url) {
-    let res = await indown(url);
-    
-    if (!res.status || !res.result || res.result.downloadUrl.length === 0) {
-        res = await snapsave(url);
-    }
+function extractMedia(item) {
+  const isVideo = item.is_video || item.media_type === 2 || item.__typename === 'GraphVideo';
 
-    return res;
+  if (isVideo) {
+    const versions = item.video_versions || [];
+    const best = versions.sort((a, b) => (a.type || 0) - (b.type || 0))[0];
+    const videoUrl = best?.url || item.video_url || null;
+    const imgCandidates = item.image_versions2?.candidates || [];
+    const bestThumb = imgCandidates.sort((a, b) => (b.width || 0) - (a.width || 0))[0];
+    const thumbnail = bestThumb?.url || item.display_url || item.thumbnail_url || null;
+    return {
+      type:      'video',
+      url:       videoUrl,
+      thumbnail,
+      width:     item.original_width  || item.dimensions?.width  || null,
+      height:    item.original_height || item.dimensions?.height || null,
+      duration:  item.video_duration  || null,
+    };
+  } else {
+    const candidates = item.image_versions2?.candidates || [];
+    const best = candidates.sort((a, b) => (b.width || 0) - (a.width || 0))[0];
+    const imageUrl = best?.url || item.display_url || item.thumbnail_url || null;
+    return {
+      type:   'photo',
+      url:    imageUrl,
+      width:  best?.width  || item.original_width  || item.dimensions?.width  || null,
+      height: best?.height || item.original_height || item.dimensions?.height || null,
+    };
+  }
 }
 
-export { igdl };
+async function scrapeInstagram(inputUrl) {
+  const shortcode = extractShortcode(inputUrl);
+  if (!shortcode) throw new Error('Shortcode tidak ditemukan dari URL: ' + inputUrl);
+  log(`📸 Shortcode: ${shortcode}`);
+  const client = createClient();
+  const { item } = await fetchViaHtml(client, shortcode);
+  const result = normalizeItem(item);
+  return { data: result, client };
+}
+
+async function streamToFile(client, url, outputPath, label) {
+  const res = await client.get(url, {
+    responseType: 'stream',
+    headers: { 'User-Agent': UA_WEB, 'Referer': 'https://www.instagram.com/', 'Accept': '*/*' },
+    timeout: 120000,
+    validateStatus: (s) => s === 200 || s === 206,
+  });
+
+  const total = parseInt(res.headers['content-length'] || '0', 10);
+  let downloaded = 0, lastLog = 0;
+  const writer = fs.createWriteStream(outputPath);
+
+  await new Promise((resolve, reject) => {
+    res.data.on('data', (chunk) => {
+      downloaded += chunk.length;
+      if (downloaded - lastLog > 512 * 1024) {
+        const pct = total ? ` (${((downloaded / total) * 100).toFixed(0)}%)` : '';
+        process.stderr.write(`📥 ${label} — ${(downloaded / 1024 / 1024).toFixed(1)} MB${pct}\n`);
+        lastLog = downloaded;
+      }
+    });
+    res.data.pipe(writer);
+    writer.on('finish', resolve);
+    writer.on('error', reject);
+    res.data.on('error', reject);
+  });
+
+  return downloaded;
+}
+
+async function downloadMedia(data, outputArg, client) {
+  if (data.type === 'carousel' || data.media.length > 1) {
+    const dir = outputArg || data.shortcode;
+    fs.mkdirSync(dir, { recursive: true });
+    process.stderr.write(`📁 Carousel: ${data.media.length} item → ${dir}/\n`);
+    for (let i = 0; i < data.media.length; i++) {
+      const m    = data.media[i];
+      const ext  = m.type === 'video' ? 'mp4' : 'jpg';
+      const fname = `${String(i + 1).padStart(3, '0')}.${ext}`;
+      const dest  = path.join(dir, fname);
+      try {
+        const bytes = await streamToFile(client, m.url, dest, `${i + 1}/${data.media.length}`);
+        process.stderr.write(`✅ ${fname} (${(bytes / 1024).toFixed(0)} KB)\n`);
+      } catch (e) {
+        process.stderr.write(`⚠️  ${fname} gagal: ${e.message}\n`);
+      }
+    }
+    return dir;
+  } else {
+    const m   = data.media[0];
+    const ext = m.type === 'video' ? 'mp4' : 'jpg';
+    const out = outputArg || `${data.shortcode}.${ext}`;
+    process.stderr.write(`⬇️  Download: ${out}\n`);
+    const bytes = await streamToFile(client, m.url, out, path.basename(out));
+    process.stderr.write(`✅ ${out} (${(bytes / 1024 / 1024).toFixed(2)} MB)\n`);
+    return out;
+  }
+}
+
+function printHelp() {
+  console.log(`
+instagram.js — Instagram Scraper & Downloader by Shann (${_REPO})
+
+Usage:
+  node instagram.js <url>              metadata only (JSON output)
+  node instagram.js <url> -d           download media
+  node instagram.js <url> -d <output>  download to custom name/path
+  node instagram.js <url> -v           verbose logging
+`.trim());
+}
+
+async function main() {
+  const args = process.argv.slice(2).filter(a => a !== '-v' && a !== '--verbose');
+  if (!args[0] || args[0] === '--help') { printHelp(); process.exit(0); }
+
+  const inputUrl   = args[0];
+  const doDownload = args.includes('-d') || args.includes('--download');
+  const dIdx       = args.findIndex(a => a === '-d' || a === '--download');
+  const outputArg  = (dIdx !== -1 && args[dIdx + 1] && !args[dIdx + 1].startsWith('-'))
+    ? args[dIdx + 1] : null;
+
+  try {
+    const { data, client } = await scrapeInstagram(inputUrl);
+    if (doDownload) data.downloadedTo = await downloadMedia(data, outputArg, client);
+    console.log(JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error('❌ Error:', err.message);
+    process.exit(1);
+  }
+}
+
+export { scrapeInstagram, downloadMedia };
+if (import.meta.url.startsWith('file:') && process.argv[1] === fileURLToPath(import.meta.url)) main();
