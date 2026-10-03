@@ -9,19 +9,12 @@ export default {
   description: "Convert video to WhatsApp video note",
   category: "convert",
   async run(conn, m, { jid, usedPrefix, command }) {
-    let quoted = m?.message?.extendedTextMessage?.contextInfo?.quotedMessage || m?.extendedTextMessage?.contextInfo?.quotedMessage;
     let mediaMessage = null;
 
-    if (quoted) {
-      mediaMessage = {
-        key: m.key,
-        message: quoted,
-      };
-    } else if (m.videoMessage) {
-      mediaMessage = {
-        key: m.key,
-        message: m,
-      };
+    if (m.quotedMessage) {
+      mediaMessage = { key: m.quotedKey || m.key, message: m.quotedMessage };
+    } else if (m.isVideo) {
+      mediaMessage = { key: m.key, message: m.message };
     } else {
       return await m.reply(`Kirim atau balas video dengan caption *${usedPrefix}${command}*`);
     }
