@@ -1,4 +1,4 @@
-import { igdl } from "../../scrape/instagram.js";
+import { scrapeInstagram } from "../../scrape/instagram.js";
 
 export default {
   name: "Instagram Downloader",
@@ -16,22 +16,32 @@ export default {
 
     await m.react("⏳");
     try {
-      const res = await igdl(url);
-      if (!res || !res.status || !res.result || res.result.downloadUrl.length === 0) {
+      const { data } = await scrapeInstagram(url);
+      
+      if (!data || !data.media || data.media.length === 0) {
         await m.react("❌");
-        return await m.reply(`Gagal mengunduh media: ${res.message || "Tidak ditemukan"}`);
+        return await m.reply("Gagal mengunduh media: Data tidak ditemukan atau akun di-private.");
       }
 
-      for (const mediaUrl of res.result.downloadUrl) {
-        if (mediaUrl.includes(".mp4")) {
-          await conn.sendMessage(jid, { video: { url: mediaUrl }, caption: res.result.metadata.caption }, { quoted: m });
-        } else {
-          await conn.sendMessage(jid, { image: { url: mediaUrl }, caption: res.result.metadata.caption }, { quoted: m });
+      const captionText = data.caption || `Instagram Post by @${data.owner?.username || 'Unknown'}`;
+
+      for (let i = 0; i < data.media.length; i++) {
+        const media = data.media[i];
+        const isVideo = media.type === "video";
+        
+        const content = isVideo 
+          ? { video: { url: media.url } } 
+          : { image: { url: media.url } };
+
+        if (i === 0) {
+          content.caption = captionText;
         }
+
+        await conn.sendMessage(jid, content, { quoted: m });
       }
+      
       await m.react("✅");
     } catch (err) {
-      console.error(err);
       await m.react("❌");
       await m.reply(`Terjadi kesalahan sistem:\n${err.message}`);
     }
