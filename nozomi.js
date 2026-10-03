@@ -62,6 +62,7 @@ import config from "./config.js";
 import { handleMessage } from "./handlers/message.js";
 import { loadPlugins } from "./plugins/index.js";
 import { getRuntimeValue } from "./utils/runtime.js";
+import { startAutoBackup } from "./utils/backup.js";
 
 const sessionDir = config.sessionDir || "nozomi_sessions";
 let reconnectTimer = null;
@@ -136,7 +137,7 @@ async function connectToWhatsApp() {
       printQRInTerminal: Boolean(config.pairingWithQr),
       browser: Browsers.ubuntu("Chrome"),
       logger: Pino({ level: "silent" }),
-      markOnlineOnConnect: config.bot.markOnlineOnConnect,
+      markOnlineOnConnect: config.markOnlineOnConnect,
       syncFullHistory: config.syncFullHistory,
     });
 
@@ -174,6 +175,7 @@ async function connectToWhatsApp() {
         console.log(
           `${chalk.green("Connected")} ${config.bot.name} successfully connected to WhatsApp!`,
         );
+        startAutoBackup(conn);
         return;
       }
       if (connection === "close") {
