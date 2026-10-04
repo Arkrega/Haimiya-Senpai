@@ -32,7 +32,9 @@ const searchPinterestAPI = async (query, limit) => {
   let results = [];
   let bookmark = null;
   let keepFetching = true;
-  while (keepFetching && results.length < limit) {
+  const fetchTarget = Math.max(limit * 3, 50);
+
+  while (keepFetching && results.length < fetchTarget) {
     const postData = {
       options: {
         query: query,
@@ -76,6 +78,8 @@ const searchPinterestAPI = async (query, limit) => {
     bookmark = jsonResponse.resource_response?.bookmark;
     if (!bookmark || !pins.length) keepFetching = false;
   }
+  
+  results = results.sort(() => Math.random() - 0.5);
   return results.slice(0, limit);
 };
 
@@ -88,16 +92,12 @@ export default {
   private_only: false,
   group_only: false,
 
-  async run(conn, m, {
-    jid,
-    args,
-    usedPrefix,
-    command
-  }) {
+  async run(conn, m, { jid, args, usedPrefix, command }) {
     try {
       const cmd = command || m.command || "pin";
       const prefix = usedPrefix || ".";
       const text = args ? args.join(" ").trim() : "";
+      
       if (!text) {
         throw new Error(`*Example Use :* ${prefix}${cmd} anime, 3\n\n*Note :* Bisa pakai koma, pipe, atau spasi (Contoh: ${prefix}${cmd} anime 5)`);
       }
@@ -118,7 +118,7 @@ export default {
       }
 
       limit = Math.min(Math.max(1, limit), 20);
-      await m.reply(global.wait || "⏳ Processing your request...");
+      await m.react("⏳");
 
       const res = await searchPinterestAPI(query, limit);
       if (!res.length) {
@@ -126,15 +126,9 @@ export default {
       }
 
       if (res.length === 1) {
-        if (typeof m.image === "function") {
-          await m.image(res[0]);
-        } else {
-          await conn.sendMessage(jid || m.chat, { image: { url: res[0] } }, { quoted: m });
-        }
+        await conn.sendMessage(jid || m.chat, { image: { url: res[0] } }, { quoted: m });
       } else {
-        if (typeof m.album === "function") {
-          await m.album(...res);
-        } else if (typeof conn.sendAlbumMessage === "function") {
+        if (typeof conn.sendAlbumMessage === "function") {
           await conn.sendAlbumMessage(jid || m.chat, res.map(url => ({ image: { url } })), { quoted: m });
         } else {
           for (const imgUrl of res) {
@@ -142,7 +136,9 @@ export default {
           }
         }
       }
+      await m.react("✅");
     } catch (e) {
+      await m.react("❌");
       if (e.message) {
         await m.reply(e.message);
       }
